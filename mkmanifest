@@ -1,0 +1,145 @@
+#!/usr/bin/bash
+
+# NOTES: This creates a SmartOS dataset from snapshot. 
+# ::: Jamie Alquiza <ja@grey-boundary.com>
+# ::: July  2, 2013 06:14:46 PM UTC
+
+clear
+
+### Info formatting
+bold=`tput bold`
+normal=`tput sgr0`
+notice() {
+	printf "${bold}:::${normal} %s\n" "$@"
+}
+
+
+### Select VM, set attributes
+
+setopts() {
+	
+	# Which VM to use
+	echo
+	notice "Please select a VM (ensure VM is powered off):"
+	_VmList=$(vmadm list type=KVM -Ho uuid,state,alias -s alias | awk '{ print FNR":" "\t" $0 }')
+	echo -en "\n$_VmList\n\n"
+	read -p "VM Number: " _VmChoice
+	# Get UUID from # choice
+	_Vm=$(echo "$_VmList" | egrep "^$_VmChoice:" | awk '{print $2}')
+	# Automatically grab disk0 size
+	_Size=$(vmadm get $_Vm | json disks | awk '/size/ {print $2}' | cut -f1 -d, | head -1)
+	echo
+	
+	# Attribute Input
+	read -p "Image Name$(if [[ $_Name ]]; then echo " ($_Name)"; fi): " _Name_In
+	read -p "Image Version$(if [[ $_Version ]]; then echo " ($_Version)"; fi): " _Version_In
+	read -p "Image Description$(if [[ $_Desc ]]; then echo " ($_Desc)"; fi): " _Desc_In
+	read -p "Operating System$(if [[ $_Os ]]; then echo " ($_Os)"; fi): " _Os_In
+	read -p "Image Root Disk Size [MB] (Blank to use detected: $_Size): " _Size_In
+
+	# Set variables from input. This is to maintain
+	# persistence in case attribute input is blank
+	# on a second pass, to not overwrite the existing value.
+
+	if [[ $_Name_In != "" ]]; then _Name=$_Name_In; fi
+	if [[ $_Version_In != "" ]]; then _Version=$_Version_In; fi
+	if [[ $_Desc_In != "" ]]; then _Desc=$_Desc_In; fi
+	if [[ $_Os_In != "" ]]; then _Os=$_Os_In; fi
+	if [[ $_Size_In ]]; then _Size=$_Size_In; fi
+
+	# Show Attributes
+	echo
+	notice "Create a dataset using the following:"
+	echo
+	echo -e "Virtual Machine:\t\t$(vmadm list uuid=$_Vm -Ho alias)"
+	echo -e "Image Name:\t\t\t$_Name"
+	echo -e "Image Version:\t\t\t$_Version"
+	echo -e "Image Description:\t\t$_Desc"
+	echo -e "Operating System:\t\t$_Os"
+	echo -e "Image Root Disk Size [MB]:\t$_Size"
+	echo
+}
+
+
+### Create compressed snapshot + manifest
+
+createds() { 
+
+	echo
+	# Create unique snapshot name
+	notice "Creating snapshot"
+	_SnapId="$_Vm-disk0@image-$(date +%s)"
+	zfs snapshot zones/$_SnapId
+
+
+	# Create compressed snapshot
+	notice "Creating a compressed image. This may take a moment..."
+	zfs send zones/$_SnapId | pbzip2 -c >/var/tmp/$_SnapId.bz2 && zfs destroy zones/$_SnapId
+
+	# Create manifest package in /opt
+	_DsDest="/opt"
+	echo 
+	read -p "Destination directory for dataset (blank for: $_DsDest): " _DsDest_In
+	if [[ $_DsDest_In != "" ]]; then $_DsDest=$Ds_Dest_In; fi
+	_DsDest="$_DsDest/$_Name-$_Version"
+	mkdir -p $_DsDest
+
+	mv /var/tmp/$_SnapId.bz2 $_DsDest/$_Name-$_Version.zvol.bz2
+
+	# Default DSManifest file
+	cat > $_DsDest/$_Name-$_Version.dsmanifest <<-EOF
+	{
+	        "name": "$_Name",
+	        "version": "$_Version",
+	        "type": "zvol",
+	        "cpu_type": "qemu64",
+	        "description": "$_Desc",
+	        "os": "$_Os",
+	        "image_size": "$_Size",
+	        "files": [
+	                {                       
+	                        "path": "$_Name-$_Version.zvol.bz2",
+	                        "sha1": "`digest -a sha1 $_DsDest/$_Name-$_Version.zvol.bz2`",
+	                        "size": `ls -l $_DsDest/$_Name-$_Version.zvol.bz2 | awk '{print $5}'` 
+	                }
+	        ],
+	        "requirements": {
+	                "networks": [
+	                        {
+	                                "name": "net0"
+	                        }
+	                ],
+	                "ssh_key": true
+	        },
+	        "disk_driver": "virtio",
+	        "nic_driver": "virtio",
+	        "uuid": "`uuid`",
+	        "creator_uuid": "***",
+	        "creator_name": "***",
+	        "platform_type": "hvm",
+	        "cloud_name": "$$$",
+	        "urn": "***:***:$_Name:$_Version",
+	        "published_at": "$(date +"%Y-%m-%dT%T.000Z")"
+		}
+	EOF
+
+	echo
+	notice "Done! Dataset can be found at:"
+	echo -en "$_DsDest\n\n"
+
+	exit 0
+}
+
+
+### Run
+
+setopts
+
+while true; do
+    read -p "Proceed with these settings? (y/N): " choice 
+    case $choice in
+        [Yy]* ) createds;;
+        [Nn]* ) setopts;;
+        * ) echo "Please answer 'y' or 'n'";;
+    esac
+done
