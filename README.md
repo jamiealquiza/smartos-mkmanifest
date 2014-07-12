@@ -1,5 +1,5 @@
 # mkmanifest
-Mkmanifest is a menu-driven tool that creates VM (KVM based) datasets that can be imported into standalone SmartOS servers (hence being written in bash) or imported into Joyent SmartDataCenter. Datasets are master images consisting of a compressed ZFS snapshot of a prepped VM disk, in addition to metadata describing the VM. Datasets are housed in a repository and cloned to deploy end-user VMs.
+Mkmanifest is a quick tool that helps create VM (KVM based) datasets that can be imported into standalone SmartOS servers or imported into Joyent SmartDataCenter. Datasets are master images consisting of a compressed ZFS snapshot of a prepped VM disk, in addition to metadata describing the VM. Datasets are housed in a repository and cloned to deploy end-user VMs.
 
 NOTICE: Please edit the script to include your private details. All '***' variables must be updated before running.
 
